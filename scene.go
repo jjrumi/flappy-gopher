@@ -10,10 +10,9 @@ import (
 )
 
 type scene struct {
-	bg   *sdl.Texture
-	bird *bird
-
-	time int
+	bg    *sdl.Texture
+	bird  *bird
+	pipes *pipes
 }
 
 func NewScene(r *sdl.Renderer) (*scene, error) {
@@ -26,10 +25,16 @@ func NewScene(r *sdl.Renderer) (*scene, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &scene{bg: bckTexture, bird: b}, nil
+
+	p, err := NewPipes(r)
+	if err != nil {
+		return nil, err
+	}
+
+	return &scene{bg: bckTexture, bird: b, pipes: p}, nil
 }
 
-func (s *scene) Run(events <-chan sdl.Event, r *sdl.Renderer) <-chan error {
+func (s *scene) run(events <-chan sdl.Event, r *sdl.Renderer) <-chan error {
 	errc := make(chan error)
 
 	go func() {
@@ -38,11 +43,19 @@ func (s *scene) Run(events <-chan sdl.Event, r *sdl.Renderer) <-chan error {
 		for {
 			select {
 			case e := <-events:
-				if done := s.HandleEvent(e); done {
+				if done := s.handleEvent(e); done {
 					return
 				}
 			case <-tick:
-				if err := s.Paint(r); err != nil {
+				s.update()
+
+				if s.bird.isDead() {
+					drawTitle(r, "Game Over")
+					time.Sleep(3 * time.Second)
+					s.restart()
+				}
+
+				if err := s.paint(r); err != nil {
 					errc <- err
 				}
 			}
@@ -52,12 +65,12 @@ func (s *scene) Run(events <-chan sdl.Event, r *sdl.Renderer) <-chan error {
 	return errc
 }
 
-func (s *scene) HandleEvent(event sdl.Event) bool {
+func (s *scene) handleEvent(event sdl.Event) bool {
 	switch event.(type) {
 	case *sdl.QuitEvent:
 		return true
 	case *sdl.MouseButtonEvent:
-		s.bird.Jump()
+		s.bird.jump()
 	case *sdl.MouseMotionEvent:
 	default:
 		log.Printf("Unknown event %T", event)
@@ -65,15 +78,29 @@ func (s *scene) HandleEvent(event sdl.Event) bool {
 	return false
 }
 
-func (s *scene) Paint(r *sdl.Renderer) error {
-	s.time++
+func (s *scene) update() {
+	s.bird.update()
+	s.pipes.update()
+	s.pipes.touch(s.bird)
+}
+
+func (s *scene) restart() {
+	s.bird.restart()
+	s.pipes.restart()
+}
+
+func (s *scene) paint(r *sdl.Renderer) error {
 	r.Clear()
 
 	if err := r.Copy(s.bg, nil, nil); err != nil {
 		return fmt.Errorf("could not background texture: %v", err)
 	}
 
-	if err := s.bird.Paint(r); err != nil {
+	if err := s.bird.paint(r); err != nil {
+		return err
+	}
+
+	if err := s.pipes.paint(r); err != nil {
 		return err
 	}
 
@@ -81,7 +108,8 @@ func (s *scene) Paint(r *sdl.Renderer) error {
 	return nil
 }
 
-func (s *scene) Destroy() {
+func (s *scene) destroy() {
 	s.bg.Destroy()
-	s.bird.Destroy()
+	s.bird.destroy()
+	s.pipes.destroy()
 }
